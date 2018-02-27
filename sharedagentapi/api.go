@@ -11,13 +11,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"github.com/pivotal-cf/cf-redis-broker/sharedagentconfig"
+	"path"
 )
 
 type redisResetter interface {
 	ResetRedis() error
 }
 
-func New(resetter redisResetter, localRepo *redis.LocalRepository) http.Handler {
+func New(config *sharedagentconfig.Config, resetter redisResetter, localRepo *redis.LocalRepository) http.Handler {
 	router := mux.NewRouter()
 
 	router.Path("/createDummyRedisConf").Methods(http.MethodPost).HandlerFunc(createDummyRedisConf(localRepo))
@@ -28,7 +30,7 @@ func New(resetter redisResetter, localRepo *redis.LocalRepository) http.Handler 
 
 	router.Path("/redis/{instance}/").
 		Methods("GET").
-		HandlerFunc(credentialsHandler())
+		HandlerFunc(credentialsHandler(config.ConfBasePath))
 
 	/*router.Path("/keycount").
 		Methods("GET").
@@ -58,12 +60,12 @@ func createDummyRedisConf(localRepo *redis.LocalRepository) http.HandlerFunc {
 	}
 }
 
-func credentialsHandler() http.HandlerFunc {
+func credentialsHandler(configBasePath string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		vars := mux.Vars(r)
 		instance := vars["instance"]
 
-		configPath := fmt.Sprintf("/tmp/redis-data-dir/%s/redis.conf", instance)
+		configPath := path.Join(configBasePath, instance, "redis.conf")
 
 		_, err := os.Stat(configPath)
 		if err != nil {
