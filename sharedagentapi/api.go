@@ -6,28 +6,33 @@ import (
 	"log"
 	"github.com/pivotal-cf/cf-redis-broker/redis"
 	"github.com/pborman/uuid"
+	"github.com/pivotal-cf/cf-redis-broker/redisconf"
+	"strconv"
+	"encoding/json"
+	"fmt"
+	"os"
 )
 
 type redisResetter interface {
 	ResetRedis() error
 }
 
-func New(resetter redisResetter, configPath string, localRepo *redis.LocalRepository) http.Handler {
+func New(resetter redisResetter, localRepo *redis.LocalRepository) http.Handler {
 	router := mux.NewRouter()
 
 	router.Path("/createDummyRedisConf").Methods(http.MethodPost).HandlerFunc(createDummyRedisConf(localRepo))
 
 	/*	router.Path("/").
 			Methods("DELETE").
-			HandlerFunc(resetHandler(resetter))
+			HandlerFunc(resetHandler(resetter))*/
 
-		router.Path("/").
-			Methods("GET").
-			HandlerFunc(credentialsHandler(configPath))
+	router.Path("/redis/{instance}/").
+		Methods("GET").
+		HandlerFunc(credentialsHandler())
 
-		router.Path("/keycount").
-			Methods("GET").
-			HandlerFunc(keyCountHandler(configPath))*/
+	/*router.Path("/keycount").
+		Methods("GET").
+		HandlerFunc(keyCountHandler(configPath))*/
 
 	return router
 }
@@ -50,5 +55,46 @@ func createDummyRedisConf(localRepo *redis.LocalRepository) http.HandlerFunc {
 		}
 
 		w.WriteHeader(http.StatusOK)
+	}
+}
+
+func credentialsHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		vars := mux.Vars(r)
+		instance := vars["instance"]
+
+		configPath := fmt.Sprintf("/tmp/redis-data-dir/%s/redis.conf", instance)
+
+		_, err := os.Stat(configPath)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("no such redis instances '%s'", instance), http.StatusInternalServerError)
+			return
+		}
+
+		conf, err := redisconf.Load(configPath)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		port, err := strconv.Atoi(conf.Get("port"))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		password := conf.Get("requirepass")
+
+		credentials := struct {
+			Port     int    `json:"port"`
+			Password string `json:"password"`
+		}{
+			Port:     port,
+			Password: password,
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		encoder := json.NewEncoder(w)
+		encoder.Encode(credentials)
 	}
 }

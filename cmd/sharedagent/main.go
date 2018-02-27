@@ -48,11 +48,13 @@ func main() {
 	)
 	redisResetter.Monit.SetExecutable(config.MonitExecutablePath)
 
+	// config.ConfPath => points to a single redis.conf (not used for shared node as we have multiple redis.conf files)
+
 	handler := auth.NewWrapper(
 		config.AuthConfiguration.Username,
 		config.AuthConfiguration.Password,
 	).Wrap(
-		sharedagentapi.New(redisResetter, config.ConfPath, createLocalRepo(logger, configPath)),
+		sharedagentapi.New(redisResetter, createLocalRepo(logger, configPath)),
 	)
 
 	http.Handle("/", handler)
