@@ -13,7 +13,13 @@ import (
 	"os"
 	"github.com/pivotal-cf/cf-redis-broker/sharedagentconfig"
 	"path"
+	"github.com/pivotal-cf/cf-redis-broker/redis/client"
+	"code.cloudfoundry.org/cli/cf/errors"
 )
+
+type KeycountResponse struct {
+	Keycount int `json:"key_count"`
+}
 
 type redisResetter interface {
 	ResetRedis() error
@@ -32,10 +38,9 @@ func New(config *sharedagentconfig.Config, resetter redisResetter, localRepo *re
 		Methods("GET").
 		HandlerFunc(credentialsHandler(config.ConfBasePath))
 
-	/*router.Path("/keycount").
+	router.Path("/redis/{instance}/keycount").
 		Methods("GET").
-		HandlerFunc(keyCountHandler(configPath))*/
-
+		HandlerFunc(keyCountHandler(config.ConfBasePath))
 	return router
 }
 
@@ -62,14 +67,9 @@ func createDummyRedisConf(localRepo *redis.LocalRepository) http.HandlerFunc {
 
 func credentialsHandler(configBasePath string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		vars := mux.Vars(r)
-		instance := vars["instance"]
-
-		configPath := path.Join(configBasePath, instance, "redis.conf")
-
-		_, err := os.Stat(configPath)
+		configPath, err := getInstanceConfigPath(r, configBasePath)
 		if err != nil {
-			http.Error(w, fmt.Sprintf("no such redis instances '%s'", instance), http.StatusInternalServerError)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 
@@ -99,4 +99,61 @@ func credentialsHandler(configBasePath string) http.HandlerFunc {
 		encoder := json.NewEncoder(w)
 		encoder.Encode(credentials)
 	}
+}
+
+func keyCountHandler(configBasePath string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		configPath, err := getInstanceConfigPath(r, configBasePath)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		conf, err := redisconf.Load(configPath)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		port, err := strconv.Atoi(conf.Get("port"))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		redis, err := client.Connect(
+			client.Port(port),
+			client.Password(conf.Password()),
+		)
+
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		count, err := redis.GlobalKeyCount()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		result := &KeycountResponse{
+			Keycount: count,
+		}
+
+		if err := json.NewEncoder(w).Encode(result); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
+	}
+}
+
+func getInstanceConfigPath(r *http.Request, configBasePath string) (string, error) {
+	vars := mux.Vars(r)
+	instance := vars["instance"]
+	configPath := path.Join(configBasePath, instance, "redis.conf")
+	_, err := os.Stat(configPath)
+	if err != nil {
+		return configPath, errors.New(fmt.Sprintf("no such redis instances '%s'", instance))
+	}
+	return configPath, nil
 }
