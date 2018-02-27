@@ -9,11 +9,13 @@ import (
 
 	"code.cloudfoundry.org/lager"
 	"github.com/pivotal-cf/brokerapi/auth"
-	"github.com/pivotal-cf/cf-redis-broker/agentapi"
 	"github.com/pivotal-cf/cf-redis-broker/agentconfig"
 	"github.com/pivotal-cf/cf-redis-broker/availability"
 	"github.com/pivotal-cf/cf-redis-broker/redisconf"
 	"github.com/pivotal-cf/cf-redis-broker/resetter"
+	"github.com/pivotal-cf/cf-redis-broker/sharedagentapi"
+	"github.com/pivotal-cf/cf-redis-broker/brokerconfig"
+	"github.com/pivotal-cf/cf-redis-broker/redis"
 )
 
 type portChecker struct{}
@@ -50,11 +52,25 @@ func main() {
 		config.AuthConfiguration.Username,
 		config.AuthConfiguration.Password,
 	).Wrap(
-		agentapi.New(redisResetter, config.ConfPath),
+		sharedagentapi.New(redisResetter, config.ConfPath, createLocalRepo(logger, configPath)),
 	)
 
 	http.Handle("/", handler)
 	logger.Fatal("http-listen", http.ListenAndServe("localhost:"+config.Port, nil))
+}
+
+// demonstrate how one could create a localRepo (if needed later)
+func createLocalRepo(logger lager.Logger, configPath *string) *redis.LocalRepository {
+	brokerConfigPath := "/Users/torsten/go/src/github.com/pivotal-cf/cf-redis-broker/configmigratorintegration/assets/broker.yml"
+	logger.Info("Config File: " + brokerConfigPath)
+	brokerConfig, err := brokerconfig.ParseConfig(brokerConfigPath)
+	if err != nil {
+		logger.Fatal("Error parsing config file", err, lager.Data{
+			"path": *configPath,
+		})
+	}
+	localRepo := redis.NewLocalRepository(brokerConfig.RedisConfiguration, logger)
+	return localRepo
 }
 
 func templateRedisConf(config *agentconfig.Config, logger lager.Logger) {
